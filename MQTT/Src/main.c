@@ -64,7 +64,7 @@ void mqtt(void);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
-unsigned char SMSCTRLZ   = 0x1A;
+unsigned char SMSCTRLZ   = 0x1A; // use to terminate tcp data incase of buffer mode
 /* USER CODE END 0 */
 
 int main(void)
