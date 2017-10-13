@@ -302,9 +302,7 @@ len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, p
 
 len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
 	 mqtt_init();
-//sprintf(tx,"AT+QISEND\r\n");	 
-//HAL_UART_Transmit(&huart1,(uint8_t *)&tx,strlen(tx),50);
-//HAL_Delay(5000);
+
 HAL_UART_Transmit(&huart1,(uint8_t *)&buf,len,50);
 /*
 rc = Socket_new("127.0.0.1", 1883, &mysock);
