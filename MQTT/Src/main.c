@@ -288,7 +288,7 @@ MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
 //int rc = 0;
 unsigned char buf[200];
 MQTTString topicString = MQTTString_initializer;
-char* payload = "sexy";
+char* payload = "yourpayload";
 int payloadlen = strlen(payload);
 int buflen = sizeof(buf);
 
@@ -297,7 +297,7 @@ data.keepAliveInterval = 20;
 data.cleansession = 1;
 int len = MQTTSerialize_connect(buf, buflen, &data); /* 1 */
 
-topicString.cstring = "vecmocon";
+topicString.cstring = "yourtopic";
 len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, payload, payloadlen); /* 2 */
 
 len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
