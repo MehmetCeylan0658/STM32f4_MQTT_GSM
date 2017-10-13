@@ -221,6 +221,9 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+/*
+This function is responsible for opening a tcp socket in tranparent mode
+*/
 void mqtt_init(void)
 {
 char mx[60];	
