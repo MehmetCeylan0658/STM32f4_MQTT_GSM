@@ -304,10 +304,6 @@ len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
 	 mqtt_init();
 
 HAL_UART_Transmit(&huart1,(uint8_t *)&buf,len,50);
-/*
-rc = Socket_new("127.0.0.1", 1883, &mysock);
-rc = write(mysock, buf, len);
-rc = close(mysock);*/
  }
 /* USER CODE END 4 */
 
