@@ -283,9 +283,7 @@ HAL_Delay(10000);
  void mqtt(void)
  { 
 
-//char tx[40];
 MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
-//int rc = 0;
 unsigned char buf[200];
 MQTTString topicString = MQTTString_initializer;
 char* payload = "yourpayload";
