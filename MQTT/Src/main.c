@@ -3,68 +3,104 @@
   * File Name          : main.c
   * Description        : Main program body
   ******************************************************************************
-  ** This notice applies to any and all portions of this file
+  * This notice applies to any and all portions of this file
   * that are not between comment pairs USER CODE BEGIN and
   * USER CODE END. Other portions of this file, whether 
   * inserted by the user or by software development tools
   * are owned by their respective copyright owners.
   *
-  * COPYRIGHT(c) 2017 STMicroelectronics
+  * Copyright (c) 2018 STMicroelectronics International N.V. 
+  * All rights reserved.
   *
-  * Redistribution and use in source and binary forms, with or without modification,
-  * are permitted provided that the following conditions are met:
-  *   1. Redistributions of source code must retain the above copyright notice,
-  *      this list of conditions and the following disclaimer.
-  *   2. Redistributions in binary form must reproduce the above copyright notice,
-  *      this list of conditions and the following disclaimer in the documentation
-  *      and/or other materials provided with the distribution.
-  *   3. Neither the name of STMicroelectronics nor the names of its contributors
-  *      may be used to endorse or promote products derived from this software
-  *      without specific prior written permission.
+  * Redistribution and use in source and binary forms, with or without 
+  * modification, are permitted, provided that the following conditions are met:
   *
-  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-  * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-  * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-  * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-  * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-  * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  * 1. Redistribution of source code must retain the above copyright notice, 
+  *    this list of conditions and the following disclaimer.
+  * 2. Redistributions in binary form must reproduce the above copyright notice,
+  *    this list of conditions and the following disclaimer in the documentation
+  *    and/or other materials provided with the distribution.
+  * 3. Neither the name of STMicroelectronics nor the names of other 
+  *    contributors to this software may be used to endorse or promote products 
+  *    derived from this software without specific written permission.
+  * 4. This software, including modifications and/or derivative works of this 
+  *    software, must execute solely and exclusively on microcontroller or
+  *    microprocessor devices manufactured by or for STMicroelectronics.
+  * 5. Redistribution and use of this software other than as permitted under 
+  *    this license is void and will automatically terminate your rights under 
+  *    this license. 
+  *
+  * THIS SOFTWARE IS PROVIDED BY STMICROELECTRONICS AND CONTRIBUTORS "AS IS" 
+  * AND ANY EXPRESS, IMPLIED OR STATUTORY WARRANTIES, INCLUDING, BUT NOT 
+  * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A 
+  * PARTICULAR PURPOSE AND NON-INFRINGEMENT OF THIRD PARTY INTELLECTUAL PROPERTY
+  * RIGHTS ARE DISCLAIMED TO THE FULLEST EXTENT PERMITTED BY LAW. IN NO EVENT 
+  * SHALL STMICROELECTRONICS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+  * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+  * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, 
+  * OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF 
+  * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING 
+  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+  * EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   *
   ******************************************************************************
   */
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f4xx_hal.h"
+#include "fatfs.h"
 
 /* USER CODE BEGIN Includes */
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdbool.h>
 #include "MQTTPacket.h"
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
+SD_HandleTypeDef hsd;
+
 UART_HandleTypeDef huart1;
+DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
+HAL_SD_CardInfoTypeDef SDCardInfo; 
 /* Private variables ---------------------------------------------------------*/
-
+FRESULT res;
+#define RX_TIMEOUT          ((uint32_t)0xFFFFFFFF)
+char* UploadFile = "upload.txt";
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_SDIO_SD_Init(void);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
+void main_menu(void);
 void mqtt_init(void);
-void mqtt(void);
+int read_file(char* filename, char* Buff);
+void mqtt_pub(void);
+void mqtt_connect(void);
+int fsize(char* file);
+void gprs_initialize(void);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
-unsigned char SMSCTRLZ   = 0x1A; // use to terminate tcp data incase of buffer mode
+char buffr[500];
+unsigned char SMSCTRLZ   = 0x1A;
+char mx[60];char vx[50];
+uint8_t receive,rx=0,cnt=0;
+unsigned int z=0;
+bool UPLOAD_FILE=false,LOG_DATA=false;
+char data[200];
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 /* USER CODE END 0 */
 
 int main(void)
@@ -92,22 +128,38 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_USART1_UART_Init();
+  MX_SDIO_SD_Init();
+  MX_FATFS_Init();
 
   /* USER CODE BEGIN 2 */
-	//mqtt_init(); 
-	mqtt();
-	//HAL_UART_Transmit(&huart1,(uint8_t *)"AT\r\n",4,50);
-	HAL_GPIO_TogglePin(GPIOG,GPIO_PIN_13);
-
+   res = f_mount(&SDFatFS, SDPath, 1);
+   if(res!=FR_OK){HAL_UART_Transmit_DMA(&huart1,(uint8_t *)"SD Card Not Mounted\r\n",21);}
+   else
+    {
+      HAL_UART_Transmit_DMA(&huart1,(uint8_t *)"SD Card Mounted\r\n",17);
+      main_menu();//Displays Run time Status on Serial Port
+    }
+   	HAL_GPIO_TogglePin(GPIOG,GPIO_PIN_13);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-   	HAL_GPIO_TogglePin(GPIOG,GPIO_PIN_14);
-		HAL_Delay(200);
+    if(UPLOAD_FILE == true)
+    {
+			memset(buffr,'\0',sizeof(buffr));
+		  int leng = read_file(UploadFile,buffr);
+			/*Introduced As Guard Time or UART transmission fucks Up(Spent 5 hrs on this)
+			NOT Necessary here but was a PINTA when executing two UART_transmit command successively.
+			*/
+			HAL_Delay(300);
+      mqtt_pub();
+      UPLOAD_FILE=false;
+    }
+		HAL_Delay(50);
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
@@ -173,6 +225,20 @@ void SystemClock_Config(void)
   HAL_NVIC_SetPriority(SysTick_IRQn, 0, 0);
 }
 
+/* SDIO init function */
+static void MX_SDIO_SD_Init(void)
+{
+
+  hsd.Instance = SDIO;
+  hsd.Init.ClockEdge = SDIO_CLOCK_EDGE_RISING;
+  hsd.Init.ClockBypass = SDIO_CLOCK_BYPASS_DISABLE;
+  hsd.Init.ClockPowerSave = SDIO_CLOCK_POWER_SAVE_DISABLE;
+  hsd.Init.BusWide = SDIO_BUS_WIDE_1B;
+  hsd.Init.HardwareFlowControl = SDIO_HARDWARE_FLOW_CONTROL_DISABLE;
+  hsd.Init.ClockDiv = 0;
+
+}
+
 /* USART1 init function */
 static void MX_USART1_UART_Init(void)
 {
@@ -192,6 +258,24 @@ static void MX_USART1_UART_Init(void)
 
 }
 
+/** 
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void) 
+{
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA2_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
+  /* DMA2_Stream7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
+
+}
+
 /** Configure pins as 
         * Analog 
         * Input 
@@ -205,7 +289,9 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct;
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
@@ -221,88 +307,142 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-/*
-This function is responsible for opening a tcp socket in tranparent mode
-*/
-void mqtt_init(void)
+int read_file(char* filename, char* Buff)
 {
-char mx[60];	
-sprintf(mx,"AT\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+CPIN?\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+CREG?\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QIFGCNT=0\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QICSGP=1,\"CMNET\"\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QIMUX=0\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QIMODE=1\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QITCFG=3,2,512,1\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QIDNSIP=1\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QIREGAPP\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QIACT\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QILOCIP\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(1000);
-sprintf(mx,"AT+QIOPEN=\"TCP\",\"iot.eclipse.org\",\"1883\"\r\n");	
-HAL_UART_Transmit(&huart1,(uint8_t *)&mx,strlen(mx),50);
-for(int i=0; i<sizeof(mx);i++){mx[i]=0;}	
-HAL_Delay(10000);
+  int j=0;
+  while(z<fsize(UploadFile))
+  {
+		f_open(&SDFile,UploadFile,FA_READ);
+    char mydata[15]="\0";
+    memset(mydata,0,sizeof(mydata));    
+    f_lseek(&SDFile, z);
+    f_gets(mydata,sizeof(mydata),&SDFile);
+    z +=strlen(mydata);
+    j += sprintf( Buff + j, mydata);
+		f_close(&SDFile);
+  } 
+  return z; 
 }
- void mqtt(void)
- { 
+void gprs_initialize(void)
+{
+  char AT [9][30] = {
+       "AT+QIFGCNT=0\r\n","AT+QICSGP=1,\"CMNET\"\r\n","AT+QIMUX=0\r\n","AT+QIMODE=1\r\n"
+       ,"AT+QITCFG=3,2,512,1\r\n","AT+QIDNSIP=1\r\n","AT+QIREGAPP\r\n","AT+QIACT\r\n","AT+QILOCIP\r\n"};
+  if(cnt<=8)
+  {
+    char mydata[100]="\0";
+    sprintf(mydata,"%s",AT[cnt]);
+    HAL_UART_Transmit_DMA(&huart1,(uint8_t*)&mydata,strlen(mydata));
+    ++cnt;
+  }
+}
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  HAL_UART_Receive_DMA(&huart1,(uint8_t *)&receive,sizeof(receive));
+  data[rx]=receive;
+   if((strstr(data,"SMS Ready")!=NULL)&&(strstr(data,"+CIEV:")!=NULL))
+   {
+      HAL_UART_Transmit_DMA(&huart1,(uint8_t *)"AT\r\n",4);
+      memset(data,'\0',sizeof(data));rx=0;  
+   }
+   else if(data[rx-3]=='O'&&data[rx-2]=='K'&&data[rx-1]=='\r'&&data[rx]=='\n')
+   {
+    gprs_initialize();
+    memset(data,'\0',sizeof(data));rx=0;
+   }
 
-MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+   else if(cnt==9)
+   {
+    memset(data,'\0',sizeof(data));rx=0;
+    ++cnt;
+    HAL_UART_Transmit_DMA(&huart1,(uint8_t *)"AT+QIOPEN=\"TCP\",\"DOMAIN_NAME\",\"PORT\"\r\n",45);
+   }
+    //For Connecting to the HTTP Server
+  //else if(data[rx-6]=='C'&&data[rx-5]=='O'&&data[rx-4]=='N'&&data[rx-3]=='N'&&data[rx-2]=='E'&&data[rx-1]=='C'&&data[rx]=='T')//Furtehr Add OR condition for continuous data logging
+  else if((strstr(data,"CONNECT\r\n")!=NULL)||cnt==11)
+	{
+			if(cnt==10)
+			{
+				mqtt_connect();
+				++cnt;
+			}
+			else if(cnt==11)
+			{
+				/*TODO: Verify after mqtt_connect does it return CONNECT or just some encoded text*/
+				UPLOAD_FILE=true;
+				HAL_GPIO_TogglePin(GPIOG,GPIO_PIN_14);
+				++cnt;
+			}
+      memset(data,'\0',sizeof(data));rx=0;
+     }
+	  else{rx++;}
+}
+void mqtt_connect(void)
+{
+MQTTPacket_connectData datas = MQTTPacket_connectData_initializer;
 unsigned char buf[200];
 MQTTString topicString = MQTTString_initializer;
-char* payload = "yourpayload";
-int payloadlen = strlen(payload);
 int buflen = sizeof(buf);
 
-data.clientID.cstring = "me";
-data.keepAliveInterval = 20;
-data.cleansession = 1;
-int len = MQTTSerialize_connect(buf, buflen, &data); /* 1 */
+datas.username.cstring = "*****";//Port to your requirement
+datas.password.cstring = "********";//Port to your requirement
+datas.clientID.cstring = "*********";//Port to your requirement
+datas.keepAliveInterval = 120;
+datas.cleansession = 1;
+int len = MQTTSerialize_connect(buf, buflen, &datas); 
 
-topicString.cstring = "yourtopic";
-len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, payload, payloadlen); /* 2 */
+HAL_UART_Transmit_DMA(&huart1,(uint8_t *)&buf,len);
+}
 
-len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
-	 mqtt_init();
+ void mqtt_pub()
+ {
+unsigned char buf[600];	 
+MQTTString topicString = MQTTString_initializer; 
+int payloadlen = strlen(buffr);
+int buflen = sizeof(buf);
+topicString.cstring = "rtc";
+int len = MQTTSerialize_publish(buf, buflen , 0, 0, 0, 0, topicString, buffr, payloadlen);
+HAL_UART_Transmit_DMA(&huart1,(uint8_t *)&buf,len);
+}
 
-HAL_UART_Transmit(&huart1,(uint8_t *)&buf,len,50);
- }
+
+void main_menu(void)
+{
+  char tx[200];
+  sprintf(tx,"\r\n================= Main Menu ==================\r\n\n");
+    HAL_UART_Transmit_DMA(&huart1,(uint8_t *)&tx,strlen(tx));
+    HAL_Delay(100);
+    memset(tx,'\0',sizeof(tx));
+    sprintf(tx,"  Sync Data       ------------------------------ 0\r\n\n");
+    HAL_UART_Transmit_DMA(&huart1,(uint8_t *)&tx,strlen(tx));
+    HAL_Delay(100);
+    memset(tx,'\0',sizeof(tx));
+    sprintf(tx,"  Run application ----------------------------- 1\r\n\n");
+    HAL_UART_Transmit_DMA(&huart1,(uint8_t *)&tx,strlen(tx));
+    HAL_Delay(100);
+    memset(tx,'\0',sizeof(tx));
+    HAL_UART_Receive(&huart1, &cnt, 1, RX_TIMEOUT);
+    if(cnt=='0')
+    {
+      HAL_UART_Transmit_DMA(&huart1,(uint8_t *)"RESET the EVAL-BOARD\r\n",22);
+      HAL_UART_Receive_DMA(&huart1,(uint8_t *)&receive,sizeof(receive));
+      cnt=0;
+    }
+    else if(cnt=='1')
+    {
+      LOG_DATA=true;
+      cnt=0;
+    }
+}
+int fsize(char* file)
+{
+    int len =0;
+    f_open(&SDFile,file, FA_READ);
+    len =  (int)f_size(&SDFile);
+    f_close(&SDFile);
+    return len;
+}
+
 /* USER CODE END 4 */
 
 /**
